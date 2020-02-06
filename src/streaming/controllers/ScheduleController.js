@@ -29,9 +29,8 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  */
 import Constants from '../constants/Constants';
+import MetricsConstants from '../constants/MetricsConstants';
 import { PlayListTrace } from '../vo/metrics/PlayList';
-import AbrController from './AbrController';
-import BufferController from './BufferController';
 import BufferLevelRule from '../rules/scheduling/BufferLevelRule';
 import NextFragmentRequestRule from '../rules/scheduling/NextFragmentRequestRule';
 import FragmentModel from '../models/FragmentModel';
@@ -40,7 +39,7 @@ import Events from '../../core/events/Events';
 import FactoryMaker from '../../core/FactoryMaker';
 import Debug from '../../core/Debug';
 import MediaController from './MediaController';
-import MetricsConstants from '../constants/MetricsConstants';
+import LiveEdgeFinder from '../utils/LiveEdgeFinder';
 
 function ScheduleController(config) {
 
@@ -79,10 +78,16 @@ function ScheduleController(config) {
         switchTrack,
         bufferResetInProgress,
         mediaRequest,
+        liveEdgeFinder,
         isReplacementRequest;
 
     function setup() {
         logger = Debug(context).getInstance().getLogger(instance);
+        if (playbackController && playbackController.getIsDynamic()) {
+            liveEdgeFinder = LiveEdgeFinder(context).create({
+                timelineConverter: timelineConverter
+            });
+        }
         resetInitialSettings();
     }
 
@@ -191,7 +196,6 @@ function ScheduleController(config) {
             bufferLevelRule.execute(streamProcessor, streamController.isTrackTypePresent(Constants.VIDEO))) {
 
             const getNextFragment = function () {
-                const fragmentController = streamProcessor.getFragmentController();
                 if ((currentRepresentationInfo.quality !== lastInitQuality || switchTrack) && (!bufferResetInProgress)) {
                     logger.debug('Quality has changed, get init request for representationid = ' + currentRepresentationInfo.id);
                     if (switchTrack) {
@@ -207,7 +211,7 @@ function ScheduleController(config) {
                 } else {
                     const replacement = replaceRequestArray.shift();
 
-                    if (fragmentController.isInitializationRequest(replacement)) {
+                    if (replacement && replacement.isInitializationRequest()) {
                         // To be sure the specific init segment had not already been loaded
                         streamProcessor.switchInitData(replacement.representationId);
                     } else {
@@ -278,13 +282,13 @@ function ScheduleController(config) {
             const trackChanged = !mediaController.isCurrentTrack(request.mediaInfo) && mediaController.getSwitchMode(request.mediaInfo.type) === MediaController.TRACK_SWITCH_MODE_NEVER_REPLACE;
             const qualityChanged = request.quality < currentRepresentationInfo.quality;
 
-            if (fastSwitchModeEnabled && (trackChanged || qualityChanged) && bufferLevel >= safeBufferLevel && abandonmentState !== AbrController.ABANDON_LOAD) {
+            if (fastSwitchModeEnabled && (trackChanged || qualityChanged) && bufferLevel >= safeBufferLevel && abandonmentState !== MetricsConstants.ABANDON_LOAD) {
                 replaceRequest(request);
                 isReplacementRequest = true;
                 logger.debug('Reloading outdated fragment at index: ', request.index);
             } else if (request.quality > currentRepresentationInfo.quality && !bufferResetInProgress) {
                 // The buffer has better quality it in then what we would request so set append point to end of buffer!!
-                setSeekTarget(playbackController.getTime() + streamProcessor.getBufferLevel());
+                setSeekTarget(playbackController.getTime() + bufferLevel);
             }
         }
     }
@@ -374,7 +378,7 @@ function ScheduleController(config) {
     }
 
     function onDataUpdateCompleted(e) {
-        if (e.error || e.sender.getStreamProcessor() !== streamProcessor) {
+        if (e.error || e.sender.getType() !== streamProcessor.getType()) {
             return;
         }
 
@@ -382,7 +386,7 @@ function ScheduleController(config) {
     }
 
     function onStreamInitialized(e) {
-        if (streamProcessor.getStreamInfo().id !== e.streamInfo.id) {
+        if (!e.streamInfo || streamProcessor.getStreamInfo().id !== e.streamInfo.id) {
             return;
         }
 
@@ -404,9 +408,8 @@ function ScheduleController(config) {
     }
 
     function setLiveEdgeSeekTarget() {
-        const liveEdgeFinder = streamProcessor.getLiveEdgeFinder();
         if (liveEdgeFinder) {
-            const liveEdge = liveEdgeFinder.getLiveEdge();
+            const liveEdge = liveEdgeFinder.getLiveEdge(streamProcessor.getRepresentationInfo());
             const startTime = liveEdge - playbackController.computeLiveDelay(currentRepresentationInfo.fragmentDuration, currentRepresentationInfo.mediaInfo.streamInfo.manifestInfo.DVRWindowSize);
             const request = streamProcessor.getFragmentRequest(currentRepresentationInfo, startTime, {
                 ignoreIsFinished: true
@@ -521,7 +524,7 @@ function ScheduleController(config) {
     }
 
     function onDataUpdateStarted(e) {
-        if (e.sender.getStreamProcessor() !== streamProcessor) {
+        if (e.sender.getType() !== streamProcessor.getType() || e.sender.getStreamId() !== streamProcessor.getStreamInfo().id) {
             return;
         }
 
@@ -551,7 +554,7 @@ function ScheduleController(config) {
     }
 
     function onBufferLevelStateChanged(e) {
-        if ((e.sender.getStreamProcessor() === streamProcessor) && e.state === BufferController.BUFFER_EMPTY && !playbackController.isSeeking()) {
+        if ((e.sender.getStreamProcessor() === streamProcessor) && e.state === MetricsConstants.BUFFER_EMPTY && !playbackController.isSeeking()) {
             logger.info('Buffer is empty! Stalling!');
             clearPlayListTraceMetrics(new Date(), PlayListTrace.REBUFFERING_REASON);
         }
@@ -572,7 +575,9 @@ function ScheduleController(config) {
     }
 
     function onTimedTextRequested(e) {
-        if (e.sender.getStreamProcessor() !== streamProcessor) {
+        const streamInfo = streamProcessor.getStreamInfo();
+        const streamInfoId = streamInfo ? streamInfo.id : null;
+        if (e.sender.getStreamId() !== streamInfoId) {
             return;
         }
 
@@ -691,6 +696,10 @@ function ScheduleController(config) {
         stop();
         completeQualityChange(false);
         resetInitialSettings();
+        if (liveEdgeFinder) {
+            liveEdgeFinder.reset();
+            liveEdgeFinder = null;
+        }
     }
 
     instance = {

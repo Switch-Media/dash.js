@@ -186,7 +186,15 @@
         },
         {
           "name": "SegmentBase, Single adaption set, 3x4 tiles",
-          "url": "https://demo.unified-streaming.com/video/tears-of-steel/tears-of-steel-tiled-thumbnails.mpd"
+          "url": "https://demo.unified-streaming.com/video/tears-of-steel/tears-of-steel-tiled-thumbnails-static.mpd"
+        },
+        {
+          "name": "SegmentTemplate with SegmentTimeline",
+          "url": "https://demo.unified-streaming.com/video/tears-of-steel/tears-of-steel-tiled-thumbnails-timeline.ism/.mpd"
+        },
+        {
+          "name": "SegmentNumber",
+          "url": "https://demo.unified-streaming.com/video/tears-of-steel/tears-of-steel-tiled-thumbnails-numbered.ism/.mpd"
         }
       ]
     },
@@ -799,7 +807,7 @@
           "url": "https://profficialsite.origin.mediaservices.windows.net/c51358ea-9a5e-4322-8951-897d640fdfd7/tearsofsteel_4k.ism/manifest(format=mpd-time-csf)",
           "protData": {
             "com.microsoft.playready": {
-              "serverURL": "http://test.playready.microsoft.com/service/rightsmanager.asmx?cfg=(persist:true,sl:150)",
+              "serverURL": "https://test.playready.microsoft.com/service/rightsmanager.asmx?cfg=(persist:true,sl:150)",
               "sessionType": "persistent-license"
             }
           }
